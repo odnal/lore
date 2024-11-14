@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "sqlite3.h"
+
 #define SB_INIT_CAP 256
 #define DB_INIT_CAP 528
 
