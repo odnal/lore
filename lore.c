@@ -20,7 +20,7 @@
         if (da->count >= da->capacity) {                                      \
             da->capacity = da->capacity == 0 ? DB_INIT_CAP : da->capacity*2;  \
             da->items = realloc(da->items, da->capacity*sizeof(*da->items));   \
-            assert(da->items != NULL && "ERROR: realloc failed\n");           \
+            assert(da->items != NULL && "ERROR: Your db might be fucked\n");           \
         }                                                                     \
         da->items[da->count++] = (item);                                      \
     } while (0)
@@ -64,7 +64,7 @@ bool load_active_notifications(sqlite3 *db, Notifications *notifs)
     bool result = true;
     sqlite3_stmt *stmt = NULL;
 
-    int ret = sqlite3_prepare_v2(db, "SELECT id, title, datetime(created_at, 'localtime') FROM Notifications;", -1, &stmt, NULL);
+    int ret = sqlite3_prepare_v2(db, "SELECT id, title, datetime(created_at, 'localtime') FROM Notifications WHERE dismissed_at IS NULL;", -1, &stmt, NULL);
     if (ret != SQLITE_OK) {
         fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
         return_defer(false);
@@ -101,8 +101,8 @@ bool show_active_notifications(sqlite3 *db)
 
     if (!load_active_notifications(db, &notifs)) return_defer(false);
 
-    for (size_t i = 0; i < notifs.count; i++) {
-        printf("%d: %s (%s)\n", notifs.items[i].id, notifs.items[i].title, notifs.items[i].created_at);
+    for (int i = 0; (size_t)i < notifs.count; i++) {
+        printf("%d: %s (%s)\n", i, notifs.items[i].title, notifs.items[i].created_at);
     }
 
 defer:
@@ -131,6 +131,50 @@ bool create_notification_with_title(sqlite3 *db, const char *title)
 
 defer:
     if (stmt) sqlite3_finalize(stmt);
+    return result;
+}
+
+bool dismiss_notification_by_id(sqlite3 *db, int id)
+{
+    bool result = true;
+    sqlite3_stmt *stmt = NULL;
+
+    int ret = sqlite3_prepare_v2(db, "UPDATE Notifications SET dismissed_at = CURRENT_TIMESTAMP WHERE id = ?", -1, &stmt, NULL);
+    if (ret != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+    
+    if (sqlite3_bind_int(stmt, 1, id) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+defer:
+    if (stmt) sqlite3_finalize(stmt);
+    return result;
+}
+
+bool dismiss_notification_by_index(sqlite3 *db, int index)
+{   
+    bool result = true;
+
+    Notifications notifs = {0};
+    if (!load_active_notifications(db, &notifs)) return_defer(false);
+    if (!(0 <= index && (size_t)index < notifs.count)) {
+        fprintf(stderr, "ERROR: %d is not a valid index of an active notification.\n", index);
+        return_defer(false);
+    }
+
+    if (!dismiss_notification_by_id(db, notifs.items[index].id)) return_defer(false);
+
+defer:
+    free(notifs.items);
     return result;
 }
 
@@ -213,7 +257,7 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "notify") == 0) {
         if (argc <= 0) {
             fprintf(stderr, "Usage: %s notify <title>\n", program_name);
-            fprintf(stderr, "ERROR: expeced <title>\n");
+            fprintf(stderr, "ERROR: expeced title\n");
             return_defer(1);
         }
 
@@ -226,6 +270,19 @@ int main(int argc, char **argv)
         char *title = sb.items;
                 
         if (!create_notification_with_title(db, title)) return_defer(1);
+        if (!show_active_notifications(db)) return_defer(1);
+        return_defer(0);
+    }
+
+    if (strcmp(cmd, "dismiss") == 0) {
+        if (argc <= 0) {
+            fprintf(stderr, "Usage: %s dismiss <id>\n", program_name);
+            fprintf(stderr, "ERROR: expeced id\n");
+            return_defer(1);
+        }
+
+        int index = atoi(shift(argv, argc));
+        if (!dismiss_notification_by_index(db, index)) return_defer(1);
         if (!show_active_notifications(db)) return_defer(1);
         return_defer(0);
     }
