@@ -224,8 +224,8 @@ int main(int argc, char **argv)
     const char *cmd = "checkout";
     if (argc > 0) cmd = shift(argv, argc);
 
-    // TODO: change to HOME for final version
-    const char *home_path = getenv("PWD");
+    // TODO: change to PWD for development
+    const char *home_path = getenv("HOME");
     if (home_path == NULL) {
         fprintf(stderr, "ERROR: No $PWD environment variable is set up. We need it to find the location of the ./"LORE_FILENAME" database.\n");
     }
@@ -242,9 +242,9 @@ int main(int argc, char **argv)
     if (ret != SQLITE_OK) {
         fprintf(stderr, "ERROR: %s: %s\n", lore_path, sqlite3_errstr(ret));
         return_defer(1);
-    } else {
-        fprintf(stdout, "Created file: %s\n", lore_path);
-    }
+    }         
+
+    //fprintf(stdout, "Created file: %s\n", lore_path);
 
     if (!create_schema(db)) return_defer(1);
 
