@@ -1,3 +1,5 @@
+#include <ctype.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -28,21 +30,30 @@
 bool create_schema(sqlite3 *db)
 {
     const char *sql =
-    "CREATE TABLE IF NOT EXISTS Notifications (\n"
-    "    id INTEGER PRIMARY KEY ASC,\n"
-    "    title TEXT NOT NULL,\n"
-    "    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
-    "    dismissed_at DATETIME DEFAULT NULL\n"
-    ")\n";
-
-    char *errmsg = NULL;
-    if (sqlite3_exec(db, sql, NULL, NULL, &errmsg) != SQLITE_OK) {
-        fprintf(stderr, "SQLITE3 ERROR: %s\n", errmsg);
-        sqlite3_free(errmsg);
+        "CREATE TABLE IF NOT EXISTS Notifications (\n"
+        "    id INTEGER PRIMARY KEY ASC,\n"
+        "    title TEXT NOT NULL,\n"
+        "    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
+        "    dismissed_at DATETIME DEFAULT NULL\n"
+        ")\n";
+    if (sqlite3_exec(db, sql, NULL, NULL, NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
         return false;
     }
 
-    // TODO: create schema for reminders
+    sql =
+        "CREATE TABLE IF NOT EXISTS Reminders (\n"
+        "    id INTEGER PRIMARY KEY ASC,\n"
+        "    title TEXT NOT NULL,\n"
+        "    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
+        "    scheduled_at DATE NOT NULL,\n"
+        "    period TEXT DEFAULT NULL,\n"
+        "    finished_at DATETIME DEFAULT NULL\n"
+        ")\n";
+    if (sqlite3_exec(db, sql, NULL, NULL, NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return false;
+    }
 
     return true;
 }
@@ -178,6 +189,45 @@ defer:
     return result;
 }
 
+bool show_active_reminders(sqlite3 *db) {
+    assert(0 && "NOT IMPLEMENTED: show active reminders");
+}
+
+bool create_new_reminder(sqlite3 *db, const char *title, const char *scheduled_at, const char *period)
+{
+    bool result = true;
+    sqlite3_stmt *stmt = NULL;
+
+    if (sqlite3_prepare_v2(db, "INSERT INTO Reminders (title, scheduled_at, period) VALUES (?, ?, ?)", -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    if (sqlite3_bind_text(stmt, 1, title, strlen(title), NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    if (sqlite3_bind_text(stmt, 2, scheduled_at, strlen(scheduled_at), NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    if (sqlite3_bind_text(stmt, 3, period, period ? strlen(period) : 0, NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+defer:
+    if (stmt) sqlite3_finalize(stmt);
+    return result;
+}
+
 typedef struct  {
     char *items;
     size_t count;
@@ -210,6 +260,61 @@ void sb_append_null(String_Builder *sb)
         assert(sb->items != NULL);
     }
     sb->items[sb->count++] = '\0';
+}
+
+// TODO: consider valid date range (ie. month 1-12, day 1-31)
+bool valid_date_format_checker(const char *str) {
+    char date_format[] = "YYYY-MM-DD";
+    char date[sizeof(date_format)] = {0};
+    size_t year_count = 0, month_count = 0, day_count = 0, pad_count = 0;
+
+    for (size_t i = 0; i < strlen(str); i++) {
+        switch (pad_count) {
+            case 0: // within the year part of the date format
+                if (isdigit(str[i])) {
+                    // fill date string with partial date format (YYYY)
+                    if (year_count >= 4) break;
+                    date[year_count++] = str[i];
+                } else if (isascii((char)str[i]) && (char)str[i] == '-') {
+                    date[year_count] = '-';
+                    pad_count++;
+                } else{
+                    return false;
+                }
+                break;
+            case 1: // within month part of the date format
+                if (isdigit(str[i])) {
+                    // fill date string with partial date format (MM)
+                    if (month_count >= 2) break;
+                    date[year_count+pad_count+month_count++] = str[i];
+                } else if (isascii((char)str[i]) && (char)str[i] == '-') {
+                    date[year_count+pad_count+month_count] = '-';
+                    pad_count++;
+                } else{
+                    return false;
+                }
+                break;
+            case 2: // within the day part of the date format
+                if (isdigit(str[i])) {
+                    if (day_count >= 2) break;
+                    // fill date string with partial date format (DD)
+                    date[year_count+pad_count+month_count+day_count++] = str[i];
+                } else if (isascii((char)str[i]) && (char)str[i] == ' ') {
+                    date[year_count+pad_count+month_count+day_count] = '\0';
+                    break;
+                } else{
+                    return false;
+                }
+                break;
+            default:
+                // Not sure the default case will ever be reached but here for sanity
+                printf("ERROR: valid date format of the form '%s' is in incorrect\n", date_format);
+                exit(1);
+        }
+    }
+
+    bool result = strcmp(str, date) == 0;
+    return result;
 }
 
 int main(int argc, char **argv)
@@ -287,7 +392,48 @@ int main(int argc, char **argv)
         return_defer(0);
     }
 
+    if (strcmp(cmd, "remind") == 0) {
+        if (argc <= 0) {
+            // TODO: implement show reminders function
+            if (!show_active_reminders(db)) return_defer(1);
+            return_defer(0);
+        }
+        char *tmp = NULL;
+
+        for (bool pad = false; argc > 0; pad = true) {
+            if (valid_date_format_checker(*argv)) {
+                tmp = *argv;
+                shift(argv, argc);
+                break;
+            } else {
+                if (pad) sb_append_cstr(&sb, " ");
+                sb_append_cstr(&sb, shift(argv, argc));
+            }
+        }
+        sb_append_null(&sb);
+        const char *title = sb.items;
+        const char *scheduled_at = tmp;
+
+        if (scheduled_at != NULL) {
+            if (argc > 0) {
+                // Optional [period] is present for reminders to periodically fire off
+                assert(0 && "NOT IMPLEMENTED: periodically perform this reminder");
+                // TODO: implement periodic reminder scheduling
+            }
+        } else {
+            fprintf(stderr, "Usage: %s remind [<title> <date> [period]]\n", program_name);
+            fprintf(stderr, "ERROR: expected date: YYYY-MM-DD\n");
+            return_defer(1);
+        }
+
+        // if period is null, reminders kick off just like a notification will with the exception for only the
+        // entirety of the date in which it was create/scheduled at.
+        if (!create_new_reminder(db, title, scheduled_at, NULL)) return_defer(1);
+        return_defer(0);
+    }
+
     fprintf(stderr, "ERROR: unknown command %s\n", cmd);
+
 defer:
     if (db) sqlite3_close(db);
     free(sb.items);
