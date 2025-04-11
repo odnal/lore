@@ -263,7 +263,8 @@ void sb_append_null(String_Builder *sb)
 }
 
 // TODO: consider valid date range (ie. month 1-12, day 1-31)
-bool valid_date_format_checker(const char *str) {
+bool valid_date_format_checker(const char *str) 
+{
     char date_format[] = "YYYY-MM-DD";
     char date[sizeof(date_format)] = {0};
     size_t year_count = 0, month_count = 0, day_count = 0, pad_count = 0;
@@ -356,6 +357,7 @@ int main(int argc, char **argv)
     // Fire of notifications everytime `lore` is called
     if (strcmp(cmd, "checkout") == 0) {
         if (!show_active_notifications(db)) return_defer(1);
+        // TODO: arguably can display reminders as well that are not specifically give periods (ie. period is NULL)
         return_defer(0);
     }
 
