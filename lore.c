@@ -415,6 +415,32 @@ bool valid_date_format_checker(const char *str)
     return result;
 }
 
+bool update_notes_add_table(sqlite3 *db, const char *notes_path)
+{
+    bool result = true;
+    sqlite3_stmt *stmt = NULL;
+    printf("%s\n", notes_path);
+    assert(0 && "NOT IMPLEMENTED");
+defer:
+    if (stmt) sqlite3_finalize(stmt);
+    return result;
+}
+
+static bool check_file_path_with_cmd(const char* notes_path, const char *sub_cmd)
+{
+    FILE *fp = fopen(notes_path, "r");
+    if (strcmp(sub_cmd, "add") == 0) {
+        if (fp != NULL) fclose(fp);
+        else return false;
+    } else if (strcmp(sub_cmd, "open") == 0) {
+        // TODO: can intercept the file here to modify the top two lines of any newly added file. Adding the `# name_indicator` and `link: path_to_file`
+        // basically re-open the file with write permission and save the file. For now it can have the same behaviour as `add`
+        if (fp != NULL) fclose(fp);
+        else return false;
+    }
+    return true;
+}
+
 int main(int argc, char **argv)
 {
     int result = 0;
@@ -538,7 +564,69 @@ int main(int argc, char **argv)
         return_defer(0);
     }
 
-    fprintf(stderr, "ERROR: unknown command %s\n", cmd);
+    if (strcmp(cmd, "notes") == 0) {
+        printf("%d [%s]\n", argc, *argv);
+        if (argc <= 0) {
+            fprintf(stderr, "Usage: %s notes <add> <open>\n", program_name);
+            return_defer(0);
+        }
+
+        char *notes_cmd = shift(argv, argc);
+
+        if(strcmp(notes_cmd, "add") == 0) {
+            if (argc <= 0) {
+                fprintf(stderr, "Usage: %s notes <add> <file_name>\n", program_name);
+                return_defer(0);
+            }
+            const char *file_name = shift(argv, argc);
+            char *pwd = getenv("PWD");
+            sb_append_cstr(&sb, pwd);
+            sb_append_cstr(&sb, "/");
+            sb_append_cstr(&sb, file_name);
+            sb_append_null(&sb);
+            printf("%.*s\n", (int) sb.count, sb.items);
+            const char *notes_path = sb.items; 
+                                               
+            if (!check_file_path_with_cmd(notes_path, notes_cmd)) {
+                fprintf(stderr, "ERROR: file name: `%s` does not exist\n", file_name);
+                return_defer(0);
+            } else {
+                printf("path exists\n");
+            };
+
+            // Process adding current notes_path string to the adds table in the database.
+            if (argc <= 0) {
+                if (!update_notes_add_table(db, notes_path)) {
+                    return_defer(0);
+                }
+            }
+        } 
+
+        if(strcmp(notes_cmd, "open") == 0) {
+            if (argc <= 0) {
+                assert(0 && "NOT YET IMPLEMENTED");
+                return_defer(0);
+            }
+        }
+
+        sb_append_cstr(&sb, notes_cmd);
+        while (argc > 0) {
+            sb_append_cstr(&sb, " ");
+            sb_append_cstr(&sb, shift(argv, argc));
+        }
+        fprintf(stderr, "ERROR: unknown command %.*s\n", (int) sb.count, sb.items);
+        return_defer(0);
+    }
+
+    String_Builder unknown_commands = {0};
+    sb_append_cstr(&unknown_commands, cmd);
+    while (argc > 0) {
+        sb_append_cstr(&unknown_commands, " ");
+        sb_append_cstr(&unknown_commands, shift(argv, argc));
+    }
+    fprintf(stderr, "ERROR: unknown command(s): %.*s\n", (int) unknown_commands.count, unknown_commands.items);
+    free(unknown_commands.items);
+    return_defer(0);
 
 defer:
     if (db) sqlite3_close(db);
