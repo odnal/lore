@@ -454,12 +454,12 @@ int main(int argc, char **argv)
     }         
 
     if (!create_schema(db)) return_defer(1);
+    if (update_file_creation_message(db)) { // one time execution for newly created databases
+        fprintf(stdout, "Created database file here: \"%s\"\n", lore_path);
+    }
 
     // Fire of notifications everytime `lore` is called
     if (strcmp(cmd, "checkout") == 0) {
-        if (update_file_creation_message(db)) { // one time execution for newly created databases
-            fprintf(stdout, "Created database file here: \"%s\"\n", lore_path);
-        }
         if (!show_active_notifications(db)) return_defer(1);
         // TODO: arguably can display reminders as well that are not specifically give periods (ie. period is NULL)
         return_defer(0);
