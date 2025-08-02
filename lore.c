@@ -27,6 +27,92 @@
         da->items[da->count++] = (item);                                      \
     } while (0)
 
+bool initialize_file_creation(sqlite3 *db)
+{
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, "INSERT INTO File_Creation DEFAULT VALUES;", -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return false;
+    }
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return false;
+    }
+
+    sqlite3_finalize(stmt);
+
+    return true;
+}
+
+bool update_file_creation_message(sqlite3 *db) 
+{
+    bool result = true;
+    sqlite3_stmt *stmt = NULL;
+    unsigned int non_null_value = 3;
+
+    // Check if table is empty
+    int ret = sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM File_Creation;", -1, &stmt, NULL);
+    if (ret != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    ret = sqlite3_step(stmt);
+    if (ret != SQLITE_ROW) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    int row_count = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+    if (row_count == 0) {
+        // Update first row since it doesnt exist
+        if (!initialize_file_creation(db)) return_defer(false);
+    } else {
+        // Table not empty, no update needed
+        return_defer(false);
+    }
+
+    // Reselect first row
+    ret = sqlite3_prepare_v2(db, "SELECT id, active, datetime(created_at, 'localtime') FROM File_Creation LIMIT 1;", -1, &stmt, NULL);
+    if (ret != SQLITE_OK || sqlite3_step(stmt) != SQLITE_ROW) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    int id = sqlite3_column_int(stmt, 0);
+    if (sqlite3_column_type(stmt, 1) != SQLITE_NULL) {
+        return_defer(false);
+    } 
+
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+
+    // Prepare update statement
+    ret = sqlite3_prepare_v2(db, "UPDATE File_Creation SET active = ? where id = ?;", -1, &stmt, NULL);
+    if (ret != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    if (sqlite3_bind_int(stmt, 1, non_null_value) != SQLITE_OK || 
+            sqlite3_bind_int(stmt, 2, id) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+defer:
+    if (stmt) sqlite3_finalize(stmt);
+    return result;
+}
+
 bool create_schema(sqlite3 *db)
 {
     const char *sql =
@@ -49,6 +135,17 @@ bool create_schema(sqlite3 *db)
         "    scheduled_at DATE NOT NULL,\n"
         "    period TEXT DEFAULT NULL,\n"
         "    finished_at DATETIME DEFAULT NULL\n"
+        ")\n";
+    if (sqlite3_exec(db, sql, NULL, NULL, NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return false;
+    }
+
+    sql =
+        "CREATE TABLE IF NOT EXISTS File_Creation (\n"
+        "    id INTEGER PRIMARY KEY ASC,\n"
+        "    active INTEGER DEFAULT NULL,\n"
+        "    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
         ")\n";
     if (sqlite3_exec(db, sql, NULL, NULL, NULL) != SQLITE_OK) {
         fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
@@ -330,14 +427,20 @@ int main(int argc, char **argv)
     const char *cmd = "checkout";
     if (argc > 0) cmd = shift(argv, argc);
 
-    // TODO: change to PWD for development
-    const char *home_path = getenv("HOME");
-    if (home_path == NULL) {
+#ifdef LOCAL
+    const char *path = getenv("PWD");
+    if (path == NULL) {
         fprintf(stderr, "ERROR: No $PWD environment variable is set up. We need it to find the location of the ./"LORE_FILENAME" database.\n");
     }
+#else
+    const char *path = getenv("HOME");
+    if (path == NULL) {
+        fprintf(stderr, "ERROR: No $HOME environment variable is set up. We need it to find the location of the ./"LORE_FILENAME" database.\n");
+    }
+#endif
 
     char lore_path[256];
-    int ra = sprintf(lore_path, "%s/"LORE_FILENAME"", home_path); 
+    int ra = sprintf(lore_path, "%s/"LORE_FILENAME"", path); 
 
     if (ra < 0) {
         fprintf(stderr, "ERROR: sprintf failed to generate file name: %s\n", LORE_FILENAME);
@@ -350,12 +453,13 @@ int main(int argc, char **argv)
         return_defer(1);
     }         
 
-    //fprintf(stdout, "Created file: %s\n", lore_path);
-
     if (!create_schema(db)) return_defer(1);
 
     // Fire of notifications everytime `lore` is called
     if (strcmp(cmd, "checkout") == 0) {
+        if (update_file_creation_message(db)) { // one time execution for newly created databases
+            fprintf(stdout, "Created database file here: \"%s\"\n", lore_path);
+        }
         if (!show_active_notifications(db)) return_defer(1);
         // TODO: arguably can display reminders as well that are not specifically give periods (ie. period is NULL)
         return_defer(0);

@@ -1,4 +1,4 @@
-#!/bin/bash -ex
+#!/bin/bash -e
 
 BUILD_DIR="./build/"
 SRC_FOLDER="./sqlite-amalgamation-3470000/"
@@ -15,5 +15,12 @@ elif ! ls $BUILD_DIR"sqlite3.o" > /dev/null 2>&1; then
 fi
 
 # Building lore
-gcc -Wall -Wextra -ggdb -static -I$SRC_FOLDER -o $BUILD_DIR"lore" lore.c $BUILD_DIR"sqlite3.o"
+if [ "$1" == "local" ]; then
+    echo "Creating data base if not exists in \".$PWD\""
+    gcc -DLOCAL -Wall -Wextra -ggdb -static -I$SRC_FOLDER -o $BUILD_DIR"lore" lore.c $BUILD_DIR"sqlite3.o"
+fi
 
+if [ "$1" == "home" ] || [ "$#" -lt 1 ]; then
+    echo "Creating data base if not exists in \".$HOME\""
+    gcc -Wall -Wextra -ggdb -static -I$SRC_FOLDER -o $BUILD_DIR"lore" lore.c $BUILD_DIR"sqlite3.o"
+fi
