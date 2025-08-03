@@ -152,6 +152,21 @@ bool create_schema(sqlite3 *db)
         return false;
     }
 
+    sql =
+        "CREATE TABLE IF NOT EXISTS Add_Notes (\n"
+        "    id INTEGER PRIMARY KEY ASC,\n"
+        "    primary_display INTEGER DEFAULT 0,\n"
+        "    notes_absolute_path_name text NOT NULL,\n"
+        "    notes_absolute_preferred_name text DEFAULT NULL,\n" 
+        "    selection_display INTEGER DEFAULT 0,\n" // going to be obtained from reading the first line of a file and parsing for `# {whatever chose name here}` if not exist - close file and use absolute path.
+        "    shown INTEGER DEFAULT NULL,\n"
+        "    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n"
+        ")\n";
+    if (sqlite3_exec(db, sql, NULL, NULL, NULL) != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return false;
+    }
+
     return true;
 }
 
@@ -415,12 +430,40 @@ bool valid_date_format_checker(const char *str)
     return result;
 }
 
-bool update_notes_add_table(sqlite3 *db, const char *notes_path)
+bool create_notes_table_with_path(sqlite3 *db, const char *notes_path)
 {
     bool result = true;
     sqlite3_stmt *stmt = NULL;
-    printf("%s\n", notes_path);
-    assert(0 && "NOT IMPLEMENTED");
+
+    int ret = sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM Add_Notes;", -1, &stmt, NULL);
+    if (ret != SQLITE_OK) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    ret = sqlite3_step(stmt);
+    if (ret != SQLITE_ROW) {
+        fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+        return_defer(false);
+    }
+
+    int row_count = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+    if (row_count >= 0) {
+        // init or update the table 
+        ret = sqlite3_prepare_v2(db, "INSERT INTO Add_Notes (notes_absolute_path_name) VALUES (?);", -1, &stmt, NULL);
+        if (sqlite3_bind_text(stmt, 1, notes_path, strlen(notes_path), NULL) != SQLITE_OK) {
+            fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+            return_defer(false);
+        }
+
+        if (sqlite3_step(stmt) != SQLITE_DONE) {
+            fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+            return_defer(false);
+        }
+    } 
+    fprintf(stderr, "UNREACHABLE");
 defer:
     if (stmt) sqlite3_finalize(stmt);
     return result;
@@ -568,7 +611,7 @@ int main(int argc, char **argv)
         printf("%d [%s]\n", argc, *argv);
         if (argc <= 0) {
             fprintf(stderr, "Usage: %s notes <add> <open>\n", program_name);
-            return_defer(0);
+            return_defer(1);
         }
 
         char *notes_cmd = shift(argv, argc);
@@ -576,7 +619,7 @@ int main(int argc, char **argv)
         if(strcmp(notes_cmd, "add") == 0) {
             if (argc <= 0) {
                 fprintf(stderr, "Usage: %s notes <add> <file_name>\n", program_name);
-                return_defer(0);
+                return_defer(1);
             }
             const char *file_name = shift(argv, argc);
             char *pwd = getenv("PWD");
@@ -589,16 +632,16 @@ int main(int argc, char **argv)
                                                
             if (!check_file_path_with_cmd(notes_path, notes_cmd)) {
                 fprintf(stderr, "ERROR: file name: `%s` does not exist\n", file_name);
-                return_defer(0);
+                return_defer(1);
             } else {
-                printf("path exists\n");
+                // TODO: IMPORTANT: allow only certain filetypes.
+                printf("path exists: TODO: allow only certain file extensions or file type. (.txt, .md, or by verifying what the file type is with some posix utitlity?\n");
             };
 
             // Process adding current notes_path string to the adds table in the database.
             if (argc <= 0) {
-                if (!update_notes_add_table(db, notes_path)) {
-                    return_defer(0);
-                }
+                if (!create_notes_table_with_path(db, notes_path)) return_defer(1);
+                return_defer(0);
             }
         } 
 
@@ -615,7 +658,7 @@ int main(int argc, char **argv)
             sb_append_cstr(&sb, shift(argv, argc));
         }
         fprintf(stderr, "ERROR: unknown command %.*s\n", (int) sb.count, sb.items);
-        return_defer(0);
+        return_defer(1);
     }
 
     String_Builder unknown_commands = {0};
@@ -626,7 +669,7 @@ int main(int argc, char **argv)
     }
     fprintf(stderr, "ERROR: unknown command(s): %.*s\n", (int) unknown_commands.count, unknown_commands.items);
     free(unknown_commands.items);
-    return_defer(0);
+    return_defer(1);
 
 defer:
     if (db) sqlite3_close(db);
