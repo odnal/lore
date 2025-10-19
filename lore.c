@@ -489,7 +489,9 @@ int main(int argc, char **argv)
     int result = 0;
     // Create sqlite database
     sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
     String_Builder sb = {0};
+    const char *template = "index.tmp";
 
     const char *program_name = shift(argv, argc);
 
@@ -530,13 +532,15 @@ int main(int argc, char **argv)
     // Fire of notifications everytime `lore` is called
     if (strcmp(cmd, "checkout") == 0) {
         if (!show_active_notifications(db)) return_defer(1);
-        // TODO: arguably can display reminders as well that are not specifically give periods (ie. period is NULL)
+        // TODO: display reminders as well that do not specifically give `periods` (ie. period is NULL) ?
         return_defer(0);
     }
 
+    // TODO: extract commands into its own structure/function relationship...
+    //       can be useful to include this for some help description for commands
     if (strcmp(cmd, "notify") == 0) {
         if (argc <= 0) {
-            fprintf(stderr, "Usage: %s notify <title>\n", program_name);
+            fprintf(stderr, "Usage: %s notify <title...>\n", program_name);
             fprintf(stderr, "ERROR: expeced title\n");
             return_defer(1);
         }
@@ -569,8 +573,7 @@ int main(int argc, char **argv)
 
     if (strcmp(cmd, "remind") == 0) {
         if (argc <= 0) {
-            // TODO: implement show reminders function
-            if (!show_active_reminders(db)) return_defer(1);
+            if (!show_active_reminders(db)) return_defer(1); // TODO: implement show reminders function
             return_defer(0);
         }
         char *tmp = NULL;
@@ -592,8 +595,8 @@ int main(int argc, char **argv)
         if (scheduled_at != NULL) {
             if (argc > 0) {
                 // Optional [period] is present for reminders to periodically fire off
-                assert(0 && "NOT IMPLEMENTED: periodically perform this reminder");
                 // TODO: implement periodic reminder scheduling
+                assert(0 && "NOT IMPLEMENTED: periodically perform this reminder");
             }
         } else {
             fprintf(stderr, "Usage: %s remind [<title> <date> [period]]\n", program_name);
@@ -601,9 +604,7 @@ int main(int argc, char **argv)
             return_defer(1);
         }
 
-        // if period is null, reminders kick off just like a notification will with the exception for only the
-        // entirety of the date in which it was create/scheduled at.
-        if (!create_new_reminder(db, title, scheduled_at, NULL)) return_defer(1);
+        if (!create_new_reminder(db, title, scheduled_at, NULL)) return_defer(1); // just like reminders but `scheduled_at` is optionally NULL
         return_defer(0);
     }
 
@@ -626,19 +627,31 @@ int main(int argc, char **argv)
             sb_append_cstr(&sb, pwd);
             sb_append_cstr(&sb, "/");
             sb_append_cstr(&sb, file_name);
-            sb_append_null(&sb);
-            printf("%.*s\n", (int) sb.count, sb.items);
+            //printf("%.*s\n", (int) sb.count, sb.items);
             const char *notes_path = sb.items; 
                                                
+            // TODO: allow only certain filetypes ?
             if (!check_file_path_with_cmd(notes_path, notes_cmd)) {
                 fprintf(stderr, "ERROR: file name: `%s` does not exist\n", file_name);
                 return_defer(1);
-            } else {
-                // TODO: IMPORTANT: allow only certain filetypes.
-                printf("path exists: TODO: allow only certain file extensions or file type. (.txt, .md, or by verifying what the file type is with some posix utitlity?\n");
-            };
+            } 
+            fprintf(stderr, "WARNING: `%s` file type may not be supported in the browser\n", file_name);
 
-            // Process adding current notes_path string to the adds table in the database.
+            int ret = sqlite3_prepare_v2(db, "SELECT id, notes_absolute_path_name from Add_Notes;", -1, &stmt, NULL);
+            if (ret != SQLITE_OK) {
+                fprintf(stderr, "SQLITE3 ERROR: %s\n", sqlite3_errmsg(db));
+                return_defer(1);
+            }
+
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                int row_id = sqlite3_column_int(stmt, 0);
+                const unsigned char *notes_path_query = sqlite3_column_text(stmt, 1);
+                if (strcmp(notes_path, (const char*)notes_path_query) == 0) {
+                    fprintf(stderr, "Path already exists in database: (%d, %s)\n", row_id, notes_path_query);
+                    return_defer(1);
+                }
+            }
+            
             if (argc <= 0) {
                 if (!create_notes_table_with_path(db, notes_path)) return_defer(1);
                 return_defer(0);
@@ -647,7 +660,13 @@ int main(int argc, char **argv)
 
         if(strcmp(notes_cmd, "open") == 0) {
             if (argc <= 0) {
-                assert(0 && "NOT YET IMPLEMENTED");
+                // TODO: For now implement just opening all the default primary
+                // file names. Later can work out the opening the file logic and
+                // performing some DSL related parsing to obtain information for
+                // changing the default file name? or some other need for such 
+                // functionality
+
+                if (!generate_html_and_open(db, template)) return_defer(1);
                 return_defer(0);
             }
         }
@@ -672,7 +691,14 @@ int main(int argc, char **argv)
     return_defer(1);
 
 defer:
+    if (stmt) sqlite3_finalize(stmt);
     if (db) sqlite3_close(db);
     free(sb.items);
     return result;
 }
+
+
+// ** TODOs for application design **
+// TODO: display all notes in browser with paths to each file
+// TODO: calender output for reminders. Think of `ncal -C` linux tool
+// TODO: implement help menu functionality
